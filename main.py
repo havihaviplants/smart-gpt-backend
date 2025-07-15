@@ -1,5 +1,6 @@
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from typing import Optional
 from datetime import datetime
@@ -52,3 +53,13 @@ def create_lead(lead: Lead):
         return {"success": True, "message": "리드가 저장되었습니다."}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+#확인
+
+@app.get("/api/leads")
+def get_leads():
+    cursor.execute("SELECT * FROM leads ORDER BY created_at DESC")
+    rows = cursor.fetchall()
+    columns = [desc[0] for desc in cursor.description]
+    data = [dict(zip(columns, row)) for row in rows]
+    return JSONResponse(content={"leads": data})
