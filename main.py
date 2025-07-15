@@ -1,65 +1,60 @@
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from typing import Optional
 from datetime import datetime
-import sqlite3
 import os
+from supabase import create_client, Client
+from dotenv import load_dotenv
+
+# ✅ 환경 변수 로드
+load_dotenv()
+
+SUPABASE_URL = os.getenv("SUPABASE_URL")
+SUPABASE_KEY = os.getenv("SUPABASE_KEY")
+if not SUPABASE_URL or not SUPABASE_KEY:
+    raise RuntimeError("❌ Supabase 설정이 누락되었습니다.")
+
+supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
 app = FastAPI()
 
-# ✅ CORS 허용 (프론트 연동 위해 전체 허용 – 이후 도메인 제한 가능)
+# ✅ CORS 설정
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # 배포 시에는 특정 도메인만 허용할 것
+    allow_origins=["*"],  # 실서비스 시엔 도메인 제한 필요
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# ✅ SQLite 초기화
-DB_FILE = "leads.db"
-conn = sqlite3.connect(DB_FILE, check_same_thread=False)
-cursor = conn.cursor()
-cursor.execute("""
-    CREATE TABLE IF NOT EXISTS leads (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        name TEXT NOT NULL,
-        phone TEXT NOT NULL,
-        business TEXT NOT NULL,
-        referral_code TEXT,
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-    )
-""")
-conn.commit()
-
-# ✅ Pydantic 모델
+# ✅ 리드 입력 모델
 class Lead(BaseModel):
     name: str
     phone: str
     business: str
     referral_code: Optional[str] = None
 
-# ✅ POST /api/leads
+# ✅ POST /api/leads → Supabase 저장
 @app.post("/api/leads")
 def create_lead(lead: Lead):
     try:
-        cursor.execute("""
-            INSERT INTO leads (name, phone, business, referral_code)
-            VALUES (?, ?, ?, ?)
-        """, (lead.name, lead.phone, lead.business, lead.referral_code))
-        conn.commit()
+        response = supabase.table("leads").insert({
+            "name": lead.name,
+            "phone": lead.phone,
+            "business": lead.business,
+            "referral_code": lead.referral_code,
+            "created_at": datetime.utcnow().isoformat()
+        }).execute()
         return {"success": True, "message": "리드가 저장되었습니다."}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-#확인
-
+# ✅ GET /api/leads → Supabase 조회
 @app.get("/api/leads")
 def get_leads():
-    cursor.execute("SELECT * FROM leads ORDER BY created_at DESC")
-    rows = cursor.fetchall()
-    columns = [desc[0] for desc in cursor.description]
-    data = [dict(zip(columns, row)) for row in rows]
-    return JSONResponse(content={"leads": data})
+    try:
+        response = supabase.table("leads").select("*").order("created_at", desc=True).execute()
+        return {"leads": response.data}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
